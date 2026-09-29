@@ -1,0 +1,206 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Chakra Petch", "IBM Plex Sans", sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --color-abyss: #05090b;
+  --color-deep: #081114;
+  --color-panel: #0a1519;
+  --color-panel2: #0d1c21;
+  --color-line: #17343a;
+  --color-line2: #23525a;
+  --color-signal: #59f2d6;
+  --color-ice: #8fd8ff;
+  --color-amber: #ffb454;
+  --color-rose: #ff5d9e;
+  --color-phos: #b6f36a;
+  --color-mist: #a6c6c7;
+  --color-dim: #5c7f83;
+}
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    font-family: var(--font-body);
+    color: var(--color-mist);
+    background-color: var(--color-abyss);
+    overflow-x: hidden;
+  }
+  ::selection {
+    background: rgba(89, 242, 214, 0.28);
+    color: #eafffb;
+  }
+  ::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.02);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1c3d44;
+    border-radius: 0;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #2a5c66;
+  }
+}
+
+@layer utilities {
+  .lbl {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-dim);
+  }
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .clip-corner {
+    clip-path: polygon(0 0, calc(100% - 11px) 0, 100% 11px, 100% 100%, 11px 100%, 0 calc(100% - 11px));
+  }
+  .clip-tag {
+    clip-path: polygon(0 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
+  }
+  .bg-etch {
+    background-image:
+      linear-gradient(rgba(89, 242, 214, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(89, 242, 214, 0.045) 1px, transparent 1px);
+    background-size: 46px 46px;
+  }
+  .scanlines::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0) 0px,
+      rgba(0, 0, 0, 0) 2px,
+      rgba(0, 0, 0, 0.22) 3px,
+      rgba(0, 0, 0, 0.22) 4px
+    );
+    mix-blend-mode: multiply;
+    opacity: 0.5;
+  }
+  .range-slim {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 2px;
+    background: #1c3d44;
+    outline: none;
+  }
+  .range-slim::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 9px;
+    height: 16px;
+    background: var(--color-signal);
+    cursor: pointer;
+    box-shadow: 0 0 10px rgba(89, 242, 214, 0.7);
+    border: none;
+  }
+  .range-slim::-moz-range-thumb {
+    width: 9px;
+    height: 16px;
+    border-radius: 0;
+    border: none;
+    background: var(--color-signal);
+    cursor: pointer;
+  }
+}
+
+@keyframes drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(2%, -3%, 0) scale(1.08);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+@keyframes sweepbar {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(1200%);
+  }
+}
+@keyframes pulseDot {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 currentColor;
+  }
+  70% {
+    opacity: 0.75;
+    box-shadow: 0 0 0 5px rgba(0, 0, 0, 0);
+  }
+}
+@keyframes flickerText {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  92% {
+    opacity: 1;
+  }
+  93% {
+    opacity: 0.45;
+  }
+  94% {
+    opacity: 1;
+  }
+  97% {
+    opacity: 0.7;
+  }
+  98% {
+    opacity: 1;
+  }
+}
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes tickerScroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.anim-drift {
+  animation: drift 22s ease-in-out infinite;
+}
+.anim-sweepbar {
+  animation: sweepbar 5.5s linear infinite;
+}
+.anim-dot {
+  animation: pulseDot 2s ease-out infinite;
+}
+.anim-flicker {
+  animation: flickerText 7s linear infinite;
+}
+.anim-rise {
+  animation: riseIn 0.55s cubic-bezier(0.2, 0.8, 0.25, 1) both;
+}
+.anim-ticker {
+  animation: tickerScroll 42s linear infinite;
+}
