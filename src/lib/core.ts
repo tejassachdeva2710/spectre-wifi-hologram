@@ -181,6 +181,8 @@ export function fnv(str: string): number {
 const hex = (n: number, len: number) => n.toString(16).toUpperCase().padStart(len, "0").slice(-len);
 
 import type { BackendStatus, BackendProbe, BackendScan } from "./api";
+import { solveLayout } from "./solver";
+import type { RangingEntry, SolvedLayout } from "./solver";
 
 /* ------------------------- device entropy ------------------------ */
 
@@ -541,31 +543,64 @@ export function reconstruct(
   fingerprint: string,
   probe: Probe,
   realScan?: BackendScan | null,
-  status?: BackendStatus | null
+  status?: BackendStatus | null,
+  ranging?: RangingEntry[] | null
 ): Model {
   const t0 = performance.now();
-  // Structure is locked to the device entropy seed (your home stays your home
-  // across rescans); live quantities re-solve from the fresh measurements.
   const rand = mulberry32(seed);
   const randLive = mulberry32((seed ^ probe.entropy ^ 0x9e3779b9) >>> 0);
 
-  const width = 7.4 + rand() * 4.6;
-  const depth = 5.6 + rand() * 3.4;
+  // --- Ranging-driven layout (real) vs. seed-driven BSP (fallback) ---
+  let solvedLayout: SolvedLayout | null = null;
+  if (ranging && ranging.length > 0) {
+    const primaryBssid = (status?.bssid ?? "").toLowerCase().trim();
+    solvedLayout = solveLayout(ranging, primaryBssid, rand);
+  }
+
+  const width = solvedLayout?.sceneWidth ?? (7.4 + rand() * 4.6);
+  const depth = solvedLayout?.sceneDepth ?? (5.6 + rand() * 3.4);
 
   // --- shell + interior partitions ---
   const rooms: Rect[] = [];
   const walls: Wall[] = [];
   const doors: Door[] = [];
-  const interiorMats: Material[] = rand() < 0.28 ? ["concrete", "drywall"] : ["drywall", "timber", "tile", "glass"];
 
-  subdivide({ x: T, y: T, w: width - 2 * T, h: depth - 2 * T }, 0, rand, rooms, walls, doors, interiorMats);
-
-  // exterior shell — masonry or concrete, with one entry opening
-  const extMat: Material = rand() < 0.5 ? "brick" : "concrete";
-  addWall(walls, doors, { x: 0, y: 0, w: width, h: T }, rand, true, extMat, false);
-  addWall(walls, doors, { x: 0, y: depth - T, w: width, h: T }, rand, true, extMat, true);
-  addWall(walls, doors, { x: 0, y: 0, w: T, h: depth }, rand, true, extMat, false);
-  addWall(walls, doors, { x: width - T, y: 0, w: T, h: depth }, rand, true, extMat, false);
+  if (solvedLayout) {
+    // Signal-consistent walls from real ranging deficits
+    for (const iw of solvedLayout.walls) {
+      // Map InferredWall to Wall — pick nearest material by loss value
+      const mat: Material = iw.isExterior
+        ? "brick"
+        : iw.loss <= 3 ? "drywall"
+        : iw.loss <= 5 ? "timber"
+        : iw.loss <= 7 ? "tile"
+        : iw.loss <= 10 ? "brick"
+        : iw.loss <= 15 ? "concrete"
+        : "metal";
+      walls.push({
+        x: iw.x, y: iw.y, w: iw.w, h: iw.h, z: 2.6,
+        material: mat,
+        loss: iw.loss,
+        exterior: iw.isExterior,
+        conf: iw.confidence,
+      });
+    }
+    // BSP interior rooms (structural layout uses seed for stability)
+    const interiorMats: Material[] = rand() < 0.28 ? ["concrete", "drywall"] : ["drywall", "timber", "tile", "glass"];
+    const innerW = width - 2 * T, innerH = depth - 2 * T;
+    const innerRooms: Rect[] = [];
+    subdivide({ x: T, y: T, w: innerW, h: innerH }, 0, rand, innerRooms, [], doors, interiorMats);
+    rooms.push(...innerRooms);
+  } else {
+    // Pure BSP fallback
+    const interiorMats: Material[] = rand() < 0.28 ? ["concrete", "drywall"] : ["drywall", "timber", "tile", "glass"];
+    subdivide({ x: T, y: T, w: width - 2 * T, h: depth - 2 * T }, 0, rand, rooms, walls, doors, interiorMats);
+    const extMat: Material = rand() < 0.5 ? "brick" : "concrete";
+    addWall(walls, doors, { x: 0, y: 0, w: width, h: T }, rand, true, extMat, false);
+    addWall(walls, doors, { x: 0, y: depth - T, w: width, h: T }, rand, true, extMat, true);
+    addWall(walls, doors, { x: 0, y: 0, w: T, h: depth }, rand, true, extMat, false);
+    addWall(walls, doors, { x: width - T, y: 0, w: T, h: depth }, rand, true, extMat, false);
+  }
 
   // one random interior partition upgraded to metal / foil-backed
   if (walls.length > 6 && rand() < 0.4) {
@@ -660,7 +695,15 @@ export function reconstruct(
       const isAnchor = idx === 0 || net.bssid.toLowerCase() === anchorBssid;
       const band: Emitter["band"] = net.band.includes("6") ? "6" : net.band.includes("5") ? "5" : "2.4";
       let pos: Vec2;
-      if (isAnchor) {
+
+      // Use real trilaterated position if available for this BSSID
+      const realPos = solvedLayout?.apPositions[net.bssid.toLowerCase()];
+      if (realPos) {
+        pos = {
+          x: Math.max(0.6, Math.min(width - 0.6, realPos.x)),
+          y: Math.max(0.6, Math.min(depth - 0.6, realPos.y)),
+        };
+      } else if (isAnchor) {
         pos = { x: width * 0.45 + (rand() - 0.5) * 1.5, y: depth * 0.45 + (rand() - 0.5) * 1.5 };
       } else {
         const ang = (idx / sortedNets.length) * Math.PI * 2 + rand() * 0.5;
@@ -729,7 +772,7 @@ export function reconstruct(
     }
   }
 
-  const device: Vec2 = {
+  const device: Vec2 = solvedLayout?.devicePos ?? {
     x: Math.max(0.9, Math.min(width - 0.9, (emitters[0]?.pos.x ?? width / 2) + (rand() > 0.5 ? 1.6 : -1.6))),
     y: Math.max(0.9, Math.min(depth - 0.9, (emitters[0]?.pos.y ?? depth / 2) + (rand() > 0.5 ? 1.3 : -1.3))),
   };

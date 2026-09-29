@@ -18,6 +18,8 @@ interface Props {
   autoOrbit: boolean;
   pulseSignal: number;
   liveRef: React.RefObject<{ jitter: number; rtt: number; drift: number; sound: boolean }>;
+  /** Ref to OccupancyGrid-like object — read per-frame to avoid stale closures */
+  occupancyRef?: React.RefObject<{ getHeatmap(): Float32Array; cols: number; rows: number; cellSize: number; sceneWidth: number; sceneDepth: number } | null>;
 }
 
 interface HoverInfo {
@@ -44,6 +46,7 @@ export default function HologramStage({
   autoOrbit,
   pulseSignal,
   liveRef,
+  occupancyRef,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const cvRef = useRef<HTMLCanvasElement | null>(null);
@@ -150,6 +153,20 @@ export default function HologramStage({
         panY: s.cam.panY,
       };
 
+      // Read occupancy heatmap per-frame (ref avoids stale closure)
+      let occHeatmap: { grid: Float32Array; cols: number; rows: number; cellSize: number; sceneW: number; sceneD: number } | null = null;
+      const occ = occupancyRef?.current;
+      if (occ) {
+        occHeatmap = {
+          grid: occ.getHeatmap(),
+          cols: occ.cols,
+          rows: occ.rows,
+          cellSize: occ.cellSize,
+          sceneW: occ.sceneWidth,
+          sceneD: occ.sceneDepth,
+        };
+      }
+
       drawScene(ctx, model, {
         cam,
         layers: s.layers,
@@ -164,6 +181,7 @@ export default function HologramStage({
         w,
         h,
         glitch,
+        occupancyHeatmap: occHeatmap,
       });
 
       frames++;

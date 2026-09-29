@@ -113,6 +113,37 @@ export async function isBackendAvailable(): Promise<boolean> {
   return backendAvailable;
 }
 
+export interface RangingEntry {
+  bssid: string;
+  distance_m: number;
+  confidence: number;
+  method: "ftm" | "friis" | "fallback";
+  band: "2.4" | "5" | "6";
+  rssi: number;
+  tx_power?: number;
+}
+
+export interface RangingResponse {
+  entries: RangingEntry[];
+  geometry: {
+    scene_width: number;
+    scene_depth: number;
+    max_distance: number;
+    ap_bearings: Record<string, number>;
+  };
+  age_s: number;
+}
+
+export async function getRanging(): Promise<RangingResponse | null> {
+  try {
+    const res = await fetch("/api/ranging", { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 export async function getStatus(): Promise<BackendStatus | null> {
   try {
     const res = await fetch("/api/status", { signal: AbortSignal.timeout(2000) });

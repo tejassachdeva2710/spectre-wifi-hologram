@@ -66,8 +66,20 @@ Gateway Ping Burst ──► 64-Sample Ring Buffer ──► Hand-Rolled DFT ─
 
 - **Jitter Trend ($\Delta\sigma/\Delta t$)**: Linear regression slope over the last 8 samples predicts whether a target is approaching or settling.
 
-### 3. Isometric Axonometric Holography
+### 3. Physical Ranging & Signal-Consistent Geometry Solver
+Instead of relying purely on synthetic room seeds, SPECTRE calculates real physical distances (in metres) to each visible AP and inverts measured RSSI deficits to reconstruct wall positions:
+- **Friis Inversion Ranging**: Distance $d = \frac{\lambda}{4\pi} \times 10^{\frac{P_{\text{tx}} + G - \text{RSSI} - L_{\text{wall}}}{20}}$ calculated with band-specific carrier wavelengths.
+- **Trilateration Spatial Layout**: APs are placed in coordinate space relative to the device using calculated radial bounds, sizing the scene to the real RF footprint.
+- **Signal-Consistent Wall Inference**: RSSI deficits relative to free-space propagation are mapped to physical partition obstacles ($\sim 3.5\text{ dB}$ per interior crossing).
+
+### 4. Persistent Real-Space Occupancy Grid
+Real RTT delay variations are projected spatially into a continuous 2D `OccupancyGrid`:
+- Jitter spikes are mapped as Gaussian blobs along the Fresnel path between the sensing device and the nearest emitter.
+- Continuous exponential decay ($\tau_{1/2} = 45\text{ s}$) maintains a real-time motion history heatmap rendered with isometric depth projection.
+
+### 5. Isometric Axonometric Holography
 The frontend runs an additive-blended Canvas renderer (`render.ts`):
+- **Real Spatial Motion Heatmap**: Renders decaying thermal occupancy hotspots directly in the isometric plane.
 - **First-Order Fresnel Zone Ellipses**: Renders iso-clearance ellipsoids ($r_1 = \sqrt{\frac{\lambda d_1 d_2}{d_1 + d_2}}$) between transmitters and the device.
 - **Isometric Signal Cones**: Directional, band-colored arc fans projecting from each transmitter toward the receiver.
 - **Articulated 5-Point Occupants**: Skeletons with articulated knees and swinging arms swaying at the exact measured cadence ($\text{Hz}$).
@@ -122,13 +134,14 @@ The Python backend exposes a zero-dependency HTTP server:
 | `/api/scan` | `GET` | All visible BSSIDs, RSSI in dBm, channel width, vendor OUI, and material hints. |
 | `/api/probe?n=9` | `GET` | Executes $n$ microsecond echo probes; returns mean RTT, jitter $\sigma$, and loss rate. |
 | `/api/motion` | `GET` | Snapshot of the 64-sample FFT motion classifier (`still`, `breath`, `walk`, `rapid`). |
+| `/api/ranging` | `GET` | Real physical distance estimates (metres), confidence, and scene geometry for all APs. |
 | `/api/stream` | `GET` | 1 Hz continuous Server-Sent Events (SSE) telemetry stream. |
 
 ---
 
 ## 🧪 Verification & Automated Test Suite
 
-SPECTRE includes an end-to-end test suite verifying all 5 system tiers:
+SPECTRE includes an end-to-end test suite verifying all system tiers:
 
 ```powershell
 python tests\run_e2e_tests.py
@@ -143,19 +156,19 @@ SPECTRE PASSIVE WI-FI HOLOGRAPHY — END-TO-END TEST SUITE
   [PASS] F1: Active Adapter Discovery (Description: Intel(R) Wi-Fi 6 AX201 160MHz)
   [PASS] F1: Valid Physical MAC Address (MAC: 3c:21:9c:20:14:fd)
   [PASS] F1: Connected AP Telemetry (SSID: Puneet Excitel-5G, Ch: 52, Band: 5 GHz)
-  [PASS] F4: Default Gateway Auto-Resolution (Gateway: 172.20.10.1)
+  [PASS] F4: Default Gateway Auto-Resolution (Gateway: 192.168.1.1)
 
 --- Tier 2: Multi-BSSID Scanning & RF Characteristics ---
   [PASS] F2: Multi-BSSID Scan Non-Empty (Found 1 BSSIDs)
   [PASS] F2: BSSID Field Schema (BSSID: a8:3a:48:38:2c:6c)
-  [PASS] F2: Signal & dBm Calculation (RSSI: -47.0 dBm)
+  [PASS] F2: Signal & dBm Calculation (RSSI: -64.0 dBm)
   [PASS] F3: Vendor OUI Resolution (Vendor: OUI A8:3A:48)
 
 --- Tier 3: Sub-ms Latency & Delay Variation Probe ---
   [PASS] F5: Probes Requested & Completed (Completed: 9/9)
-  [PASS] F5: Sub-ms Mean RTT Calculation (Mean: 21.07 ms)
-  [PASS] F5: Bessel Standard Deviation Jitter sigma (Jitter sigma: 20.669 ms)
-  [PASS] F5: Min/Max Boundaries (Min: 1.825 ms, Max: 46.669 ms)
+  [PASS] F5: Sub-ms Mean RTT Calculation (Mean: 3.78 ms)
+  [PASS] F5: Bessel Standard Deviation Jitter sigma (Jitter sigma: 4.601 ms)
+  [PASS] F5: Min/Max Boundaries (Min: 1.414 ms, Max: 15.736 ms)
 
 --- Tier 4: HTTP Server & REST Endpoints ---
   [PASS] F6: GET /api/status 200 OK
@@ -163,17 +176,19 @@ SPECTRE PASSIVE WI-FI HOLOGRAPHY — END-TO-END TEST SUITE
   [PASS] F6: GET /api/scan 200 OK
   [PASS] F6: GET /api/probe?n=5 200 OK
   [PASS] F6: GET /api/telemetry 200 OK
-  [PASS] F6: GET /api/motion 200 OK (Class: rapid)
-  [PASS] F5: Probe Motion Classification (Motion Class: rapid)
+  [PASS] F6: GET /api/motion 200 OK (Class: still)
+  [PASS] F6: GET /api/ranging 200 OK (Entries: 1, Scene: 20.0m)
+  [PASS] F8: Physical Distance Estimation (AP a8:3a:48:38:2c:6c: 86.5m (friis))
+  [PASS] F5: Probe Motion Classification (Motion Class: still)
   [PASS] F7: SSE Content-Type text/event-stream
   [PASS] F7: SSE Frame Delivery (Payload: data: {"status": "connected"...)
 
 --- Tier 5: Production Build Verification ---
-  [PASS] F14: Production Bundle (dist/index.html) (Size: 307.2 KB)
+  [PASS] F14: Production Bundle (dist/index.html) (Size: 318.8 KB)
   [PASS] F14: Singlefile Bundle Inlined (>200 KB)
 
 ======================================================================
-TEST RESULTS: 23 PASSED, 0 FAILED
+TEST RESULTS: 25 PASSED, 0 FAILED
 ======================================================================
 ```
 

@@ -468,7 +468,7 @@ export function SidePanel({
                     <div className="flex items-center gap-2">
                       <Bar v={(e.rssi - minRssi) / Math.max(0.01, maxRssi - minRssi)} color={e.color} />
                       <span className="num shrink-0 text-[8.5px] text-dim">
-                        ch{e.channel} · {e.band}G · {e.width}MHz
+                        ch{e.channel} · {e.band}G · {e.width}MHz · {Math.hypot(e.pos.x - model.device.x, e.pos.y - model.device.y).toFixed(1)}m
                       </span>
                     </div>
                     <div className="flex items-center gap-2">

@@ -37,6 +37,8 @@ export interface View {
   glitch: number;
   // Map of emitter id → { prevRssi, bloomT (0..1 fading) }
   emitterBloom?: Record<string, { prevRssi: number; bloomT: number }>;
+  // Real spatial occupancy heatmap from OccupancyGrid (optional)
+  occupancyHeatmap?: { grid: Float32Array; cols: number; rows: number; cellSize: number; sceneW: number; sceneD: number } | null;
 }
 
 export interface Projector {
@@ -866,6 +868,39 @@ export function drawScene(ctx: CanvasRenderingContext2D, m: Model, v: View) {
       const txt = `${c.rssi.toFixed(1)} dBm · σ${(c.variance * 100).toFixed(0)} · ×${c.crossings}`;
       tag(ctx, txt, a.x + 12, a.y - 12, "#eafffb", "left", 8.5);
     }
+  }
+
+  /* ---- 11b. occupancy heatmap (real motion history) ---- */
+  if (v.layers.motion && v.occupancyHeatmap) {
+    const occ = v.occupancyHeatmap;
+    ctx.globalCompositeOperation = "lighter";
+    for (let row = 0; row < occ.rows; row++) {
+      for (let col = 0; col < occ.cols; col++) {
+        const score = occ.grid[row * occ.cols + col];
+        if (score < 0.02) continue;  // skip empty cells
+        // Scene coordinate of this cell centre
+        const wx = (col + 0.5) * occ.cellSize;
+        const wy = (row + 0.5) * occ.cellSize;
+        const sp = p.project(wx, wy, 0);
+        // Map score to warm orange-red glow
+        const alpha = Math.min(0.55, score * 0.7) * v.intensity;
+        const r = Math.round(255);
+        const g = Math.round(80 + (1 - score) * 120);
+        const gColor = Math.max(0, Math.min(255, g));
+        ctx.globalAlpha = alpha;
+        // Draw a small ellipse at the cell's isometric projection
+        const px = sp.x;
+        const py = sp.y;
+        const rx = Math.max(2, (occ.cellSize * p.scale * 0.6));
+        const ry = rx * 0.5;  // isometric vertical compression
+        ctx.beginPath();
+        ctx.ellipse(px, py, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fillStyle = `rgb(${r},${gColor},30)`;
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "lighter";
   }
 
   /* ---- 12. glitch bands ---- */

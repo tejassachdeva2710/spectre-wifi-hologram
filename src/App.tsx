@@ -5,7 +5,8 @@ import { ControlRail, PRESETS, SidePanel, TelemetryStrip, TopBar } from "./compo
 import { reconstruct, measure, type Model, type Probe } from "./lib/core";
 import type { Camera, Layers } from "./lib/render";
 import { blip, chirp } from "./lib/audio";
-import { getScan, runProbe, subscribeTelemetry, type BackendScan, type BackendStatus } from "./lib/api";
+import { getScan, runProbe, subscribeTelemetry, getRanging, type BackendScan, type BackendStatus, type RangingEntry } from "./lib/api";
+import { OccupancyGrid } from "./lib/occupancy";
 
 const LAYER_KEYS: (keyof Layers)[] = [
   "field",
@@ -68,6 +69,8 @@ export default function App() {
     scan: BackendScan | null;
     status: BackendStatus | null;
   } | null>(null);
+  const rangingRef = useRef<RangingEntry[] | null>(null);
+  const occupancyRef = useRef<OccupancyGrid | null>(null);
 
   /* ------------------------- calibration entry ------------------------- */
   const onComplete = useCallback(
@@ -79,7 +82,7 @@ export default function App() {
       scan?: BackendScan | null,
       status?: BackendStatus | null
     ) => {
-      const m = reconstruct(s, fp, p, scan, status);
+      const m = reconstruct(s, fp, p, scan, status, rangingRef.current);
       baseRef.current = { seed: s, fingerprint: fp, scan: scan ?? null, status: status ?? null };
       setSeed(s);
       setFingerprint(fp);
@@ -96,6 +99,21 @@ export default function App() {
       );
       liveRef.current = { jitter: p.jitter, rtt: p.rtt, drift: 0, sound };
       setPhase("live");
+
+      // Fetch real ranging data in background after boot — re-solve with real positions
+      getRanging().then((res) => {
+        if (!res || res.entries.length === 0) return;
+        rangingRef.current = res.entries;
+        // Init occupancy grid with real scene dimensions
+        occupancyRef.current = new OccupancyGrid(res.geometry.scene_width, res.geometry.scene_depth, 0.25);
+        // Re-solve model with real emitter positions
+        setModel((prev) => {
+          if (!prev) return prev;
+          const base = baseRef.current;
+          if (!base) return prev;
+          return reconstruct(base.seed, base.fingerprint, p, base.scan, base.status, res.entries);
+        });
+      }).catch(() => { /* ranging unavailable — synthetic layout fine */ });
     },
     [sound]
   );
@@ -149,18 +167,27 @@ export default function App() {
         }
         prevMotionClassRef.current = newClass;
 
+        // Feed real jitter into occupancy grid
+        setModel((prev) => {
+          if (!prev || !occupancyRef.current) return prev;
+          const occ = occupancyRef.current;
+          const emitterPositions = prev.emitters.map(e => e.pos);
+          occ.decay(45000, Date.now());  // half-life 45s
+          occ.accumulate(jitter, rtt, prev.device, emitterPositions, newClass);
+          // Occupancy doesn't change the model structure — just the grid
+          // The renderer reads occupancyRef directly via a passed prop
+          return prev; // no re-render needed here; render.ts reads it on next frame
+        });
+
         // Handle rescan notification from background daemon
         const rescanEvent = (event.telemetry as any).rescan;
         if (rescanEvent && baseRef.current) {
-          // Soft re-solve: preserve structural layout, update RF field only
-          // We call reconstruct with same seed (same structure) but fresh telemetry
-          // The reconstruct fn uses the seed for BSP — same seed = same home layout
           setScan: {
             const base = baseRef.current;
             const freshScan: any = { count: rescanEvent.count, networks: rescanEvent.networks };
             setModel((prev) => {
               if (!prev || !probe) return prev;
-              const updated = reconstruct(base.seed, base.fingerprint, probe as any, freshScan, base.status);
+              const updated = reconstruct(base.seed, base.fingerprint, probe as any, freshScan, base.status, rangingRef.current);
               return updated;
             });
           }
@@ -208,7 +235,8 @@ export default function App() {
       baseRef.current.fingerprint,
       p,
       hwScan ?? baseRef.current.scan,
-      baseRef.current.status
+      baseRef.current.status,
+      rangingRef.current
     );
     setProbe(p);
     setModel(m);
@@ -354,6 +382,7 @@ export default function App() {
             autoOrbit={autoOrbit}
             liveRef={liveRef}
             pulseSignal={pulseSignal}
+            occupancyRef={occupancyRef as any}
           />
           {scanning && (
             <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-abyss/45">

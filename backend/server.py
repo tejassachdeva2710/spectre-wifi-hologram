@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from backend.wifi import WifiManager
 from backend.probe import GatewayProbe
+from backend.ranging import compute_ranging, compute_scene_geometry, get_ranging_cache, RangingCache
 
 
 class SpectreServerState:
@@ -36,6 +37,7 @@ class SpectreServerState:
         self.lock = threading.Lock()
         self.probe = GatewayProbe()
         self.wifi = WifiManager()
+        self._ranging_cache: RangingCache = get_ranging_cache()
 
         # Cache timestamps
         self.last_status_time = 0.0
@@ -54,7 +56,14 @@ class SpectreServerState:
         self.refresh_status()
         self.refresh_scan()
 
-        # Background 30s rescan daemon
+        # Initial ranging computation
+        try:
+            networks = self.cached_scan.get("networks", [])
+            self._ranging_cache.update(networks, self.cached_status)
+        except Exception:
+            pass
+
+        # Background 30s rescan daemon (includes ranging update)
         t = threading.Thread(target=self._rescan_loop, daemon=True)
         t.start()
 
@@ -88,7 +97,7 @@ class SpectreServerState:
         return dict(self.cached_scan)
 
     def _rescan_loop(self):
-        """Background daemon: rescans Wi-Fi every 30s and stages a rescan SSE event."""
+        """Background daemon: rescans Wi-Fi every 30s, updates ranging cache, stages SSE event."""
         while True:
             time.sleep(30)
             try:
@@ -105,8 +114,21 @@ class SpectreServerState:
                         "networks": fresh_scan.get("networks", []),
                         "timestamp": time.time(),
                     }
+                # Refresh ranging in background
+                try:
+                    status_snap = {}
+                    with self.lock:
+                        status_snap = dict(self.cached_status)
+                    self._ranging_cache.update(fresh_scan.get("networks", []), status_snap)
+                except Exception:
+                    pass
             except Exception:
                 pass
+
+    def get_ranging(self) -> Dict[str, Any]:
+        """Return current ranging estimates and scene geometry."""
+        entries, geometry = self._ranging_cache.get()
+        return {"entries": entries, "geometry": geometry, "age_s": round(self._ranging_cache.age_s(), 1)}
 
     def get_motion_snapshot(self) -> Dict[str, Any]:
         """Returns current motion classification from ring buffer without running new probes."""
@@ -278,6 +300,8 @@ class SpectreRequestHandler(http.server.BaseHTTPRequestHandler):
             self.handle_stream()
         elif path == "/api/motion":
             self.handle_motion()
+        elif path == "/api/ranging":
+            self.handle_ranging()
         elif path in ("/", "/api"):
             self.handle_root()
         else:
@@ -331,6 +355,10 @@ class SpectreRequestHandler(http.server.BaseHTTPRequestHandler):
         """Real-time motion classification from the ring buffer — no new probes."""
         motion_data = STATE.get_motion_snapshot()
         self._send_json_response(motion_data)
+
+    def handle_ranging(self):
+        """Real physical distance estimates to all visible APs (Friis inversion)."""
+        self._send_json_response(STATE.get_ranging())
 
     def handle_stream(self):
         """

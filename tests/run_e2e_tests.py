@@ -160,6 +160,23 @@ def run_all_tests():
         motion_data = json.loads(res_motion.read().decode())
         assert_test("F6: GET /api/motion 200 OK", res_motion.status == 200 and "motion_class" in motion_data, f"Class: {motion_data.get('motion_class')}")
 
+        # GET /api/ranging (v2.1 physical distance & trilateration)
+        conn.request("GET", "/api/ranging")
+        res_ranging = conn.getresponse()
+        ranging_data = json.loads(res_ranging.read().decode())
+        assert_test(
+            "F6: GET /api/ranging 200 OK",
+            res_ranging.status == 200 and "entries" in ranging_data and "geometry" in ranging_data,
+            f"Entries: {len(ranging_data.get('entries', []))}, Scene: {ranging_data.get('geometry', {}).get('scene_width')}m"
+        )
+        if ranging_data.get("entries"):
+            first_entry = ranging_data["entries"][0]
+            assert_test(
+                "F8: Physical Distance Estimation",
+                "distance_m" in first_entry and first_entry["distance_m"] > 0,
+                f"AP {first_entry.get('bssid')}: {first_entry.get('distance_m')}m ({first_entry.get('method')})"
+            )
+
         # Probe v2 fields
         assert_test("F5: Probe Motion Classification", "motion_class" in (data.get("probe") or {}), f"Motion Class: {data.get('probe', {}).get('motion_class')}")
 
